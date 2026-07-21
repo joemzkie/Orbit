@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import Optional
 from random import randrange 
 
+from crud import fetch_all_posts
+
 class Post(BaseModel):
     title: str
     content: str
@@ -33,7 +35,8 @@ def root():
 
 @app.get("/posts")
 def get_posts():
-    return {"DATA": my_posts}
+    get_all_post = fetch_all_posts()
+    return {"DATA": get_all_post}
 
 @app.post("/posts", status_code= status.HTTP_201_CREATED)
 def create_posts(post: Post):
