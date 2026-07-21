@@ -1,24 +1,34 @@
 import os
+from collections.abc import Generator
 from pathlib import Path
 
-import psycopg
 from dotenv import load_dotenv
-from psycopg.rows import dict_row
+from sqlalchemy import URL, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-# Load the .env file located beside this module, regardless of the current folder.
 load_dotenv(Path(__file__).with_name(".env"))
 
-DB_URL = (
-    f"dbname={os.getenv('DB_NAME')} "
-    f"user={os.getenv('DB_USER')} "
-    f"password={os.getenv('DB_PASSWORD')} "
-    f"host={os.getenv('DB_HOST')} "
-    f"port={os.getenv('DB_PORT')}"
+database_url = URL.create(
+    "postgresql+psycopg",
+    username=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    host=os.getenv("DB_HOST", "localhost"),
+    port=int(os.getenv("DB_PORT", "5432")),
+    database=os.getenv("DB_NAME"),
 )
 
-def get_db_connection():
-    """Yields a fresh dictionary-based database connection."""
-    # dict_row ensures your results look like {"id": 1, "title": "..."} 
-    # instead of just (1, "...")
-    return psycopg.connect(DB_URL, row_factory=dict_row)
+engine = create_engine(database_url)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
+class Base(DeclarativeBase):
+    pass
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Provide one SQLAlchemy session for each request."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
