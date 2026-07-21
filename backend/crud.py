@@ -9,12 +9,19 @@ def fetch_post_by_id(post_id):
       with get_db_connection() as conn:
           with conn.cursor() as cur:
               cur.execute("SELECT * FROM posts WHERE id = %s", (post_id,))
-              return cur.fetchall()
+              return cur.fetchone()
 
-
-def main():
-    read = fetch_all_posts()
-    print(read)
-
-if __name__ == "__main__":
-    main()
+def create_post(data: dict):
+      with get_db_connection() as conn:
+          with conn.cursor() as cur:
+              cur.execute(
+                  """
+                  INSERT INTO posts (title, content)
+                  VALUES (%s, %s)
+                  RETURNING *
+                  """,
+                  (data["title"], data["content"]),
+              )
+              post = cur.fetchone()
+              conn.commit()
+              return post

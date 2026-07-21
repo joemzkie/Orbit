@@ -41,9 +41,10 @@ def get_posts():
 @app.post("/posts", status_code= status.HTTP_201_CREATED)
 def create_posts(post: Post):
     post_dict = post.dict()
-    post_dict['id'] = randrange(0, 1000000) 
-    my_posts.append(post_dict)
-    return {"data": post_dict}
+    # The CRUD function is named create_post (singular); calling create_posts
+    # raises AttributeError and FastAPI returns an internal-server-error response.
+    post_create = crud.create_post(post_dict)
+    return {"data": post_create}
 
 @app.get("/posts/latest")
 def get_latest_posts():
