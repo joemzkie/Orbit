@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 from random import randrange 
 
-from crud import fetch_all_posts
+import crud
 
 class Post(BaseModel):
     title: str
@@ -35,7 +35,7 @@ def root():
 
 @app.get("/posts")
 def get_posts():
-    get_all_post = fetch_all_posts()
+    get_all_post = crud.fetch_all_posts()
     return {"DATA": get_all_post}
 
 @app.post("/posts", status_code= status.HTTP_201_CREATED)
@@ -54,7 +54,7 @@ def get_latest_posts():
 
 @app.get("/posts/{id}")
 def getpost(id: int, response: Response):
-    search_post = find_post(id)
+    search_post = crud.fetch_post_by_id(id)
     if not search_post:
         raise HTTPException(
             status_code= status.HTTP_404_NOT_FOUND, 
