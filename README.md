@@ -2,7 +2,7 @@
 
 > **Status: Work in progress.**
 >
-> Orbit is a learning project and an actively developed FastAPI backend for posts and user accounts.
+> Orbit is a learning project with a React feed and an actively developed FastAPI API for posts and user accounts.
 
 ## What this project does
 
@@ -12,8 +12,11 @@ The current backend provides a PostgreSQL-backed API that can:
 - Create user accounts with an email address as the primary key.
 - Hash user passwords with Argon2 before saving them.
 - Record when each user account was created.
+- Authenticate users with short-lived HttpOnly JWT cookies.
+- Attach every post to its authenticated owner.
+- Protect mutations with idempotency keys and Redis-backed rate limiting.
 
-The frontend and user login/token authentication are still in progress.
+Comments, voting, threaded replies, and file uploads are still in progress.
 
 ## Technology
 
@@ -24,6 +27,8 @@ The frontend and user login/token authentication are still in progress.
 - Pydantic for request validation and response models
 - Alembic for versioned database migrations
 - pwdlib with Argon2 for password hashing
+- Redis for distributed token-bucket rate limiting
+- React and Vite for the frontend feed
 
 ## Project structure
 
@@ -83,11 +88,25 @@ DB_USER="postgres"
 DB_PASSWORD="your-password"
 DB_HOST="localhost"
 DB_PORT="5432"
+JWT_SECRET="replace-with-a-long-random-secret"
+REDIS_URL="redis://localhost:6379/0"
+CORS_ORIGINS="http://localhost:5173"
+COOKIE_SECURE="false"
 ```
 
 Do not commit `.env`, because it contains credentials.
 
-### 4. Apply database migrations
+`JWT_SECRET` must be a long, random value. Set `COOKIE_SECURE="true"` when the application is served over HTTPS in production.
+
+### 4. Start Redis
+
+The mutation endpoints fail closed with `503` when Redis is unavailable. For local development with Docker:
+
+```powershell
+docker run --name orbit-redis -p 6379:6379 redis:7-alpine
+```
+
+### 5. Apply database migrations
 
 Run this command from the `backend` directory:
 
@@ -98,7 +117,7 @@ cd backend
 
 Alembic applies each migration once and remembers the current version in PostgreSQL's `alembic_version` table.
 
-### 5. Start the API server
+### 6. Start the API server
 
 From the `backend` directory:
 
@@ -110,6 +129,18 @@ The API runs at `http://127.0.0.1:8000`.
 
 - Interactive API documentation: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON description: `http://127.0.0.1:8000/openapi.json`
+
+### 7. Start the frontend
+
+In a second PowerShell terminal:
+
+```powershell
+cd frontend\Orbit
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite proxies `/api` requests to FastAPI during development.
 
 ## Database tables
 
@@ -129,6 +160,8 @@ The API runs at `http://127.0.0.1:8000`.
 | `title` | Post title. |
 | `content` | Full post text. |
 | `published` | Whether the post is published; defaults to `true`. |
+| `owner` | Required foreign key to `users.email`; identifies the post owner. |
+| `created_at` | Timestamp set by PostgreSQL when the post is created. |
 
 ## API endpoints
 
@@ -136,11 +169,11 @@ The API runs at `http://127.0.0.1:8000`.
 
 | Method | URL | Purpose |
 | --- | --- | --- |
-| `GET` | `/posts` | Return all posts. |
-| `POST` | `/posts` | Create a post. |
+| `GET` | `/posts?limit=20&cursor=...` | Return one cursor-paginated feed page. |
+| `POST` | `/posts` | Create a post for the authenticated user. |
 | `GET` | `/posts/latest` | Return up to ten newest posts. |
 | `GET` | `/posts/{post_id}` | Return one post. |
-| `PUT` | `/put/{post_id}` | Replace a post's fields. |
+| `PUT` | `/posts/{post_id}` | Replace the authenticated owner's post fields. |
 | `DELETE` | `/posts/{post_id}` | Delete a post. |
 
 ### Users
@@ -148,6 +181,14 @@ The API runs at `http://127.0.0.1:8000`.
 | Method | URL | Purpose |
 | --- | --- | --- |
 | `POST` | `/users` | Register a user. |
+
+### Authentication
+
+| Method | URL | Purpose |
+| --- | --- | --- |
+| `POST` | `/auth/login` | Verify credentials and set an HttpOnly session cookie. |
+| `POST` | `/auth/logout` | Clear the session cookie. |
+| `GET` | `/auth/me` | Return the authenticated user's safe profile. |
 
 Example user registration request:
 
@@ -173,11 +214,7 @@ Registration returns `409 Conflict` if an account already uses the email address
 
 The backend hashes passwords through `security.py` before they reach the database. A hash cannot be converted back into the original password.
 
-When login is added, it must:
-
-1. Find the user by email.
-2. Verify the submitted password against the stored hash using `password_hasher.verify()`.
-3. Return the same generic `401 Unauthorized` response for an unknown email or an incorrect password.
+Login finds a user by email, verifies the submitted password through `password_hasher.verify()`, and returns the same generic `401 Unauthorized` response for an unknown email or an incorrect password.
 
 Do not compare plaintext passwords or return a password/hash in an API response.
 
@@ -187,15 +224,16 @@ Alembic tracks intentional database changes as Python files in `backend/alembic/
 
 - `20260722_01_create_users_table.py` created the `users` table with `email` as its primary key.
 - `20260722_02_add_users_created_at.py` added the non-null `created_at` timestamp while preserving existing users.
+- `20260722_03_add_post_ownership_and_idempotency.py` backfilled existing posts to `user@example.com`, added the owner foreign key/index, and created durable idempotency records.
 
 To create future migrations, first update the SQLAlchemy model, then create and review a migration before applying it. Never manually change a production table without recording the equivalent migration.
 
 ## Current limitations and next steps
 
-- No frontend has been added yet.
-- Login, JWT tokens, and protected routes have not been implemented.
-- CORS must be configured before a frontend running on another port can call this API from a browser.
-- Automated tests should be added as the API grows.
+- Comments, votes, threaded replies, file uploads, and display names are not implemented.
+- Redis is required before registration, login, posting, updating, or deleting can succeed.
+- Every `POST`, `PUT`, and `DELETE` must include a unique `Idempotency-Key` header; the React API client creates this automatically.
+- The backend sets a 9-second PostgreSQL statement timeout and a 10-second route timeout, returning structured `503`/`504` errors instead of hanging.
 
 ## Git workflow
 

@@ -10,3 +10,10 @@ def hash_password(password: str) -> str:
 
     # Hash the plaintext before it is written to the database.
     return password_hasher.hash(password)
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a submitted password against its stored Argon2 hash."""
+
+    # Delegate constant-time hash verification to the password library.
+    return password_hasher.verify(password, password_hash)

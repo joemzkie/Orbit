@@ -25,3 +25,10 @@ class UserRead(UserBase):
 
     # Allow Pydantic to serialize attributes from SQLAlchemy ORM objects.
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserLogin(UserBase):
+    """Accept credentials for an existing user account."""
+
+    # Accept the password that will be verified against the stored Argon2 hash.
+    password: str = Field(min_length=8, max_length=256)

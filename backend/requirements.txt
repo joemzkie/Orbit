@@ -3,6 +3,9 @@ fastapi
 uvicorn[standard]
 SQLAlchemy
 psycopg[binary]
+asyncpg
 python-dotenv
 pydantic[email]
 pwdlib[argon2]
+PyJWT
+redis[hiredis]
