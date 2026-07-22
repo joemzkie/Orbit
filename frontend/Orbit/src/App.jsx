@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, subscribeNetworkStatus } from "./api/client";
 import "./App.css";
 
@@ -32,7 +32,7 @@ function CommentSection({ post, currentUser, showError }) {
     return () => {
       active = false;
     };
-  }, [post.id]);
+  }, [post.id, showError]);
 
   async function submit(event) {
     event.preventDefault();
@@ -553,13 +553,13 @@ function App() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
 
-  function showError(error) {
+  const showError = useCallback((error) => {
     const message =
       error instanceof ApiError
         ? error.message
         : "Something went wrong. Please try again.";
     setToast(message);
-  }
+  }, []);
 
   async function loadFeed(cursor = null, signal) {
     const page = await api.getPosts(cursor, signal);
@@ -584,7 +584,7 @@ function App() {
         if (error.status !== 401) showError(error);
       });
     return () => controller.abort();
-  }, []);
+  }, [showError]);
 
   useEffect(() => {
     return subscribeNetworkStatus(setServerWaking);
@@ -629,7 +629,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [selectedPostId, user?.email]);
+  }, [selectedPostId, showError, user?.email]);
 
   async function handleLogin(email, password) {
     setAuthPending(true);

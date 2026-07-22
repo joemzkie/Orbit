@@ -1,4 +1,7 @@
-const API_BASE = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
+// Production uses the Render URL ending in /api. Local development can use the
+// Vite proxy by leaving VITE_API_URL unset.
+const API_BASE = (configuredApiUrl || "/api").replace(/\/+$/, "");
 const REQUEST_TIMEOUT_MS = 65_000;
 const WAKE_UP_NOTICE_MS = 4_000;
 
@@ -13,7 +16,8 @@ export function subscribeNetworkStatus(listener) {
 }
 
 function apiUrl(path) {
-  return `${API_BASE}/${path.replace(/^\/+/, "")}`;
+  const endpoint = path.replace(/^\/+/, "");
+  return `${API_BASE}/${endpoint}`;
 }
 
 export class ApiError extends Error {
@@ -51,7 +55,17 @@ async function request(path, options = {}) {
       },
     });
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : null;
+    let payload = null;
+
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        // Render proxies can return a non-JSON HTML error page during an outage.
+        // Preserve a useful error rather than letting JSON.parse crash the UI.
+        payload = { detail: "The server returned an unexpected response." };
+      }
+    }
 
     if (!response.ok) {
       throw new ApiError(

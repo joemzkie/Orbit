@@ -23,3 +23,7 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local Codex tooling; not required to build or deploy the application
+.agents/
+skills-lock.json
