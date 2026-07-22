@@ -1,4 +1,6 @@
-from sqlalchemy import String
+from datetime import datetime
+
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from dbconn import Base
@@ -14,3 +16,5 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, primary_key=True)
     # Store an irreversible password hash used for authentication.
     password: Mapped[str] = mapped_column(String)
+    # Record the timezone-aware timestamp when the user account was created.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

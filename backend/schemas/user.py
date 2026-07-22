@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -17,6 +19,9 @@ class UserCreate(UserBase):
 
 class UserRead(UserBase):
     """Expose the safe user fields returned by the API."""
+
+    # Include the time when the user account was first created.
+    created_at: datetime
 
     # Allow Pydantic to serialize attributes from SQLAlchemy ORM objects.
     model_config = ConfigDict(from_attributes=True)
