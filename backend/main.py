@@ -91,20 +91,22 @@ def cors_policy() -> tuple[list[str], str | None]:
     return exact_origins, f"^({'|'.join(wildcard_patterns)})$" if wildcard_patterns else None
 
 
-# Restrict browser requests to explicit origins; wildcard Vercel previews are regex-matched.
+# Apply bounded timing, distributed abuse protection, and mutation retry safety.
+app.add_middleware(IdempotencyMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestTimeoutMiddleware)
+# Starlette executes the most recently added middleware first. Register CORS
+# last so it is the outermost layer and answers browser OPTIONS preflights
+# before the timeout, rate-limit, or idempotency middleware can intercept them.
 cors_origins, cors_origin_regex = cors_policy()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-# Apply bounded timing, distributed abuse protection, and mutation retry safety.
-app.add_middleware(IdempotencyMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(RequestTimeoutMiddleware)
 # Register post, user-registration, and authenticated session endpoints.
 app.include_router(posts.router, prefix="/api")
 app.include_router(users.router, prefix="/api")

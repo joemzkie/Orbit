@@ -19,6 +19,7 @@ function apiBaseUrl(value) {
 const API_BASE = apiBaseUrl(configuredApiUrl);
 const REQUEST_TIMEOUT_MS = 65_000;
 const WAKE_UP_NOTICE_MS = 4_000;
+const API_DEBUG = import.meta.env.VITE_API_DEBUG === "true";
 
 let slowRequestCount = 0;
 let networkStatusListener = () => {};
@@ -35,6 +36,16 @@ function apiUrl(path) {
   return `${API_BASE}/${endpoint}`;
 }
 
+function logApiDiagnostic(event, details) {
+  const failedResponse = event === "response_received" && (
+    details.redirected || details.status >= 400
+  );
+  if (API_DEBUG || event === "request_failed" || failedResponse) {
+    // Never include headers, cookies, or request bodies in browser diagnostics.
+    console.info(`[Orbit API] ${event}`, details);
+  }
+}
+
 export class ApiError extends Error {
   constructor(message, status, code) {
     super(message);
@@ -48,6 +59,8 @@ function idempotencyKey() {
 }
 
 async function request(path, options = {}) {
+  const url = apiUrl(path);
+  const method = options.method || "GET";
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let isSlow = false;
@@ -60,7 +73,8 @@ async function request(path, options = {}) {
   options.signal?.addEventListener("abort", abort, { once: true });
 
   try {
-    const response = await fetch(apiUrl(path), {
+    logApiDiagnostic("request_started", { method, url });
+    const response = await fetch(url, {
       ...options,
       signal: controller.signal,
       credentials: "include",
@@ -68,6 +82,13 @@ async function request(path, options = {}) {
         Accept: "application/json",
         ...options.headers,
       },
+    });
+    logApiDiagnostic("response_received", {
+      method,
+      requestUrl: url,
+      responseUrl: response.url,
+      status: response.status,
+      redirected: response.redirected,
     });
     const text = await response.text();
     let payload = null;
@@ -91,6 +112,11 @@ async function request(path, options = {}) {
     }
     return payload;
   } catch (error) {
+    logApiDiagnostic("request_failed", {
+      method,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    });
     if (error.name === "AbortError") {
       throw new ApiError(
         "The server did not respond within 65 seconds. Please try again.",
