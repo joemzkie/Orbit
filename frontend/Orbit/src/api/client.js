@@ -1,7 +1,22 @@
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
-// Production uses the Render URL ending in /api. Local development can use the
-// Vite proxy by leaving VITE_API_URL unset.
-const API_BASE = (configuredApiUrl || "/api").replace(/\/+$/, "");
+
+function apiBaseUrl(value) {
+  // Local development can use the Vite proxy by leaving VITE_API_URL unset.
+  if (!value) return "/api";
+
+  const base = value.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(base)) return base;
+
+  const url = new URL(base);
+  // Render is served over TLS. Avoid an HTTP request that Render would redirect.
+  if (import.meta.env.PROD) url.protocol = "https:";
+  // Orbit's FastAPI routers are all mounted below /api. This also makes a
+  // host-only Render URL resolve to the correct API prefix exactly once.
+  if (!url.pathname || url.pathname === "/") url.pathname = "/api";
+  return url.toString().replace(/\/+$/, "");
+}
+
+const API_BASE = apiBaseUrl(configuredApiUrl);
 const REQUEST_TIMEOUT_MS = 65_000;
 const WAKE_UP_NOTICE_MS = 4_000;
 
