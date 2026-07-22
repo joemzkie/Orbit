@@ -1,0 +1,11 @@
+{
+  "installCommand": "npm ci --prefix Orbit",
+  "buildCommand": "npm run build --prefix Orbit",
+  "outputDirectory": "Orbit/dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
