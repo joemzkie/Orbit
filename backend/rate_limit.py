@@ -48,9 +48,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """Reject requests that exceed the configured bucket allowance."""
 
         # Skip documentation and CORS preflight traffic because they have no data side effects.
-        if request.method == "OPTIONS" or request.url.path in {"/docs", "/openapi.json", "/redoc"}:
+        if request.method == "OPTIONS" or request.url.path in {"/docs", "/openapi.json", "/redoc", "/healthz"}:
             return await call_next(request)
-        is_authentication = request.url.path in {"/auth/login", "/auth/signup", "/auth/me/password"}
+        is_authentication = request.url.path in {"/api/auth/login", "/api/auth/signup", "/api/auth/me/password"}
         is_mutation = request.method in {"POST", "PUT", "DELETE"}
         capacity = 5 if is_authentication else 20 if is_mutation else 60
         redis_client: Redis | None = getattr(request.app.state, "redis", None)

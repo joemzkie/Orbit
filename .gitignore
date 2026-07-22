@@ -10,6 +10,8 @@ env/
 # Environment secrets and local configuration
 .env
 .env.*
+node_modules/
+dist/
 
 # Local databases and logs
 *.sqlite3

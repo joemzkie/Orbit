@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import AUTH_COOKIE_NAME, JWT_EXPIRE_MINUTES, create_access_token, get_current_user
+from auth import AUTH_COOKIE_NAME, JWT_EXPIRE_MINUTES, auth_cookie_settings, create_access_token, get_current_user
 from dbconn import get_db
 from models.user import User
 from schemas.user import PasswordUpdate, UserCreate, UserLogin, UserRead, UsernameUpdate
@@ -44,8 +44,7 @@ async def login(credentials: UserLogin, response: Response, db: AsyncSession = D
         value=create_access_token(user.email),
         max_age=JWT_EXPIRE_MINUTES * 60,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
+        **auth_cookie_settings(),
         path="/",
     )
     return user

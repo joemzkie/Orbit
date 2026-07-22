@@ -9,3 +9,4 @@ pydantic[email]
 pwdlib[argon2]
 PyJWT
 redis[hiredis]
+supabase>=2.31,<3

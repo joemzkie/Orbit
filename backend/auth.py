@@ -17,6 +17,18 @@ JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "15"))
 AUTH_COOKIE_NAME = "orbit_access_token"
 
 
+def auth_cookie_settings() -> dict[str, str | bool]:
+    """Return environment-controlled cookie settings for local and cross-site production use."""
+
+    same_site = os.getenv("COOKIE_SAMESITE", "lax").lower()
+    if same_site not in {"lax", "strict", "none"}:
+        raise RuntimeError("COOKIE_SAMESITE must be lax, strict, or none")
+    return {
+        "secure": os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        "samesite": same_site,
+    }
+
+
 def create_access_token(email: str) -> str:
     """Create a short-lived signed token for an authenticated email address."""
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, api } from "./api/client";
+import { ApiError, api, subscribeNetworkStatus } from "./api/client";
 import "./App.css";
 
 function postIdFromHash() {
@@ -549,6 +549,7 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [postPending, setPostPending] = useState(false);
   const [toast, setToast] = useState("");
+  const [serverWaking, setServerWaking] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
 
@@ -583,6 +584,10 @@ function App() {
         if (error.status !== 401) showError(error);
       });
     return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    return subscribeNetworkStatus(setServerWaking);
   }, []);
 
   useEffect(() => {
@@ -839,6 +844,11 @@ function App() {
           <button onClick={() => setToast("")} aria-label="Dismiss message">
             ×
           </button>
+        </div>
+      )}
+      {serverWaking && (
+        <div className="wake-up-notice" role="status">
+          Waking up server, please wait…
         </div>
       )}
 

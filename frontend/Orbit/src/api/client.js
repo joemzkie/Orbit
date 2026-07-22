@@ -1,4 +1,20 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
+const API_BASE = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
+const REQUEST_TIMEOUT_MS = 65_000;
+const WAKE_UP_NOTICE_MS = 4_000;
+
+let slowRequestCount = 0;
+let networkStatusListener = () => {};
+
+export function subscribeNetworkStatus(listener) {
+  networkStatusListener = listener;
+  return () => {
+    if (networkStatusListener === listener) networkStatusListener = () => {};
+  };
+}
+
+function apiUrl(path) {
+  return `${API_BASE}/${path.replace(/^\/+/, "")}`;
+}
 
 export class ApiError extends Error {
   constructor(message, status, code) {
@@ -14,12 +30,18 @@ function idempotencyKey() {
 
 async function request(path, options = {}) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 9000);
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let isSlow = false;
+  const wakeUpNotice = window.setTimeout(() => {
+    isSlow = true;
+    slowRequestCount += 1;
+    networkStatusListener(true);
+  }, WAKE_UP_NOTICE_MS);
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
 
   try {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(apiUrl(path), {
       ...options,
       signal: controller.signal,
       credentials: "include",
@@ -42,7 +64,7 @@ async function request(path, options = {}) {
   } catch (error) {
     if (error.name === "AbortError") {
       throw new ApiError(
-        "Server is taking longer than usual to respond. Please try again in a moment.",
+        "The server did not respond within 65 seconds. Please try again.",
         504,
         "request_timeout",
       );
@@ -50,6 +72,11 @@ async function request(path, options = {}) {
     throw error;
   } finally {
     window.clearTimeout(timeout);
+    window.clearTimeout(wakeUpNotice);
+    if (isSlow) {
+      slowRequestCount -= 1;
+      networkStatusListener(slowRequestCount > 0);
+    }
     options.signal?.removeEventListener("abort", abort);
   }
 }
