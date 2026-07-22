@@ -8,7 +8,7 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dbconn import Base, database_url  # noqa: E402
-from models import idempotency, post, user  # noqa: E402, F401
+from models import comment, idempotency, like, post, user  # noqa: E402, F401
 
 
 # Read logging settings from Alembic's configuration file when it is available.

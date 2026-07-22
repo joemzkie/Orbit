@@ -35,6 +35,11 @@ class PostRead(PostBase):
     owner: str
     # Include the database timestamp when the post was created.
     created_at: datetime
+    # Return the cached count and the requesting user's ledger state.
+    likes_count: int
+    comments_count: int = 0
+    liked_by_current_user: bool = False
+    is_owned_by_current_user: bool = False
 
     # Allow Pydantic to serialize attributes from SQLAlchemy ORM objects.
     model_config = ConfigDict(from_attributes=True)
@@ -47,3 +52,10 @@ class PostPage(BaseModel):
     items: list[PostRead]
     # Return the ID cursor for the next page or null when the feed is exhausted.
     next_cursor: int | None
+
+
+class LikeState(BaseModel):
+    """Return the state needed to reconcile an optimistic like button."""
+
+    likes_count: int
+    liked_by_current_user: bool

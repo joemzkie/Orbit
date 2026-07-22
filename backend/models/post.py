@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from dbconn import Base
@@ -20,7 +20,14 @@ class Post(Base):
     content: Mapped[str] = mapped_column(Text)
     # Mark posts as public by default unless explicitly set otherwise.
     published: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Store the email address of the user who created this post.
-    owner: Mapped[str] = mapped_column(ForeignKey("users.email", ondelete="RESTRICT"), index=True)
+    # Store an immutable public author label; legacy rows retain their email labels.
+    owner: Mapped[str] = mapped_column(String, index=True)
+    # Keep the private account identity for authorization, even when usernames change.
+    author_email: Mapped[str] = mapped_column(ForeignKey("users.email", ondelete="RESTRICT"), index=True)
+    # Cache the total likes; database triggers keep this in sync with post_likes.
+    likes_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     # Record the database time when the post was created.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Refuse invalid counter values even if data is changed outside the API.
+    __table_args__ = (CheckConstraint("likes_count >= 0", name="ck_posts_likes_count_nonnegative"),)

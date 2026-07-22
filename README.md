@@ -16,7 +16,7 @@ The current backend provides a PostgreSQL-backed API that can:
 - Attach every post to its authenticated owner.
 - Protect mutations with idempotency keys and Redis-backed rate limiting.
 
-Comments, voting, threaded replies, and file uploads are still in progress.
+Comments and one-like-per-user voting are available for posts and comments. Threaded replies and file uploads are still in progress.
 
 ## Technology
 
@@ -162,6 +162,13 @@ Open `http://localhost:5173`. Vite proxies `/api` requests to FastAPI during dev
 | `published` | Whether the post is published; defaults to `true`. |
 | `owner` | Required foreign key to `users.email`; identifies the post owner. |
 | `created_at` | Timestamp set by PostgreSQL when the post is created. |
+| `likes_count` | Trigger-maintained cached total of durable `post_likes` records. |
+
+### `comments`, `post_likes`, and `comment_likes`
+
+`comments` belongs to a post (`ON DELETE CASCADE`) and stores its author email, body, creation timestamp, and a trigger-maintained `likes_count`. Its `(post_id, created_at, id)` index supports chronological comment rendering, and `owner` is indexed for author lookups.
+
+The two like tables are immutable-style ledgers with composite primary keys: `(user_email, post_id)` and `(user_email, comment_id)`. Those keys make a duplicate like physically impossible, even when requests race. PostgreSQL triggers update the cached counters in the same transaction, avoiding expensive `COUNT()` queries on the feed path.
 
 ## API endpoints
 
@@ -175,6 +182,12 @@ Open `http://localhost:5173`. Vite proxies `/api` requests to FastAPI during dev
 | `GET` | `/posts/{post_id}` | Return one post. |
 | `PUT` | `/posts/{post_id}` | Replace the authenticated owner's post fields. |
 | `DELETE` | `/posts/{post_id}` | Delete a post. |
+| `GET` | `/posts/{post_id}/comments` | Return chronological comments for a post. |
+| `POST` | `/posts/{post_id}/comments` | Add an authenticated user's comment. |
+| `POST` | `/posts/{post_id}/like` | Like a post once for the signed-in user. |
+| `DELETE` | `/posts/{post_id}/like` | Remove the signed-in user's post like. |
+| `POST` | `/comments/{comment_id}/like` | Like a comment once for the signed-in user. |
+| `DELETE` | `/comments/{comment_id}/like` | Remove the signed-in user's comment like. |
 
 ### Users
 
@@ -187,6 +200,7 @@ Open `http://localhost:5173`. Vite proxies `/api` requests to FastAPI during dev
 | Method | URL | Purpose |
 | --- | --- | --- |
 | `POST` | `/auth/login` | Verify credentials and set an HttpOnly session cookie. |
+| `POST` | `/auth/signup` | Create a user with a validated email and an Argon2 password hash. |
 | `POST` | `/auth/logout` | Clear the session cookie. |
 | `GET` | `/auth/me` | Return the authenticated user's safe profile. |
 
@@ -208,7 +222,7 @@ Successful response:
 }
 ```
 
-Registration returns `409 Conflict` if an account already uses the email address. Passwords must contain at least eight characters.
+Registration returns `409 Conflict` if an account already uses the email address. Passwords require at least 12 characters, uppercase and lowercase letters, and a number.
 
 ## Password security
 
@@ -225,12 +239,13 @@ Alembic tracks intentional database changes as Python files in `backend/alembic/
 - `20260722_01_create_users_table.py` created the `users` table with `email` as its primary key.
 - `20260722_02_add_users_created_at.py` added the non-null `created_at` timestamp while preserving existing users.
 - `20260722_03_add_post_ownership_and_idempotency.py` backfilled existing posts to `user@example.com`, added the owner foreign key/index, and created durable idempotency records.
+- `20260722_04_add_comments_and_likes.py` adds comments, durable post/comment like ledgers, and transactionally maintained like counters.
 
 To create future migrations, first update the SQLAlchemy model, then create and review a migration before applying it. Never manually change a production table without recording the equivalent migration.
 
 ## Current limitations and next steps
 
-- Comments, votes, threaded replies, file uploads, and display names are not implemented.
+- Threaded replies, file uploads, and display names are not implemented.
 - Redis is required before registration, login, posting, updating, or deleting can succeed.
 - Every `POST`, `PUT`, and `DELETE` must include a unique `Idempotency-Key` header; the React API client creates this automatically.
 - The backend sets a 9-second PostgreSQL statement timeout and a 10-second route timeout, returning structured `503`/`504` errors instead of hanging.

@@ -50,9 +50,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Skip documentation and CORS preflight traffic because they have no data side effects.
         if request.method == "OPTIONS" or request.url.path in {"/docs", "/openapi.json", "/redoc"}:
             return await call_next(request)
-        is_login = request.url.path == "/auth/login"
+        is_authentication = request.url.path in {"/auth/login", "/auth/signup", "/auth/me/password"}
         is_mutation = request.method in {"POST", "PUT", "DELETE"}
-        capacity = 5 if is_login else 20 if is_mutation else 60
+        capacity = 5 if is_authentication else 20 if is_mutation else 60
         redis_client: Redis | None = getattr(request.app.state, "redis", None)
         if redis_client is None:
             # Fail closed for state-changing traffic when distributed protection is unavailable.
@@ -64,7 +64,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             import time
 
             principal = request_principal(request)
-            bucket = "login" if is_login else "mutation" if is_mutation else "read"
+            bucket = "authentication" if is_authentication else "mutation" if is_mutation else "read"
             allowed, retry_after = await redis_client.eval(
                 TOKEN_BUCKET_SCRIPT,
                 1,

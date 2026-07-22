@@ -53,3 +53,13 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication is required")
     return user
+
+
+async def get_optional_current_user(
+    db: AsyncSession = Depends(get_db),
+    access_token: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> User | None:
+    """Load the signed-in user when a valid session exists, otherwise return None."""
+
+    email = decode_access_token(access_token)
+    return await db.get(User, email) if email else None
