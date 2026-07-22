@@ -1,14 +1,16 @@
-from sqlalchemy import Integer, String
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from dbconn import Base
 
 
 class User(Base):
-    """Reserved user model for the users router."""
+    """Map user account records to the users database table."""
 
+    # Set the physical table name used for user account records.
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # Store each user's email address as the table's unique primary key.
+    email: Mapped[str] = mapped_column(String, primary_key=True)
+    # Store an irreversible password hash used for authentication.
     password: Mapped[str] = mapped_column(String)
