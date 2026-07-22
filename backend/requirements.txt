@@ -1,0 +1,8 @@
+alembic
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg[binary]
+python-dotenv
+pydantic[email]
+pwdlib[argon2]
