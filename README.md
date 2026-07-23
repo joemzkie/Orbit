@@ -1,138 +1,275 @@
 # Orbit
 
-> **Status: Work in progress.**
->
-> Orbit is a learning project with a React feed and an actively developed FastAPI API for posts and user accounts.
+Orbit is a full-stack community feed for publishing posts, discussing them in comments, and expressing lightweight feedback through likes. It is intentionally built as a learning project with production-minded boundaries: a React/Vite browser client, a FastAPI API, Supabase-hosted PostgreSQL, and Redis-compatible infrastructure for request safety.
 
-## What this project does
+## What this repository demonstrates
 
-The current backend provides a PostgreSQL-backed API that can:
+- Cookie-based account sessions with short-lived JWTs and Argon2 password hashes.
+- Public reads with authenticated mutations: posts, comments, likes, profiles, and passwords.
+- Owner-only editing and deletion enforced by the API and reflected in the UI.
+- Database-backed integrity, cursor pagination, cascade deletes, rate limiting, request idempotency, and bounded timeouts.
+- A responsive React UI that remains usable down to a 375px-wide phone viewport.
 
-- Create, read, update, delete, and list posts.
-- Create user accounts with an email address as the primary key.
-- Hash user passwords with Argon2 before saving them.
-- Record when each user account was created.
-- Authenticate users with short-lived HttpOnly JWT cookies.
-- Attach every post to its authenticated owner.
-- Protect mutations with idempotency keys and Redis-backed rate limiting.
+This project is not a hosted authentication product. The FastAPI service owns its user/session logic and uses Supabase primarily as managed PostgreSQL. The server creates a Supabase client from server-only credentials for future server-side integration; the React application does not use a Supabase key directly.
 
-Comments and one-like-per-user voting are available for posts and comments. Threaded replies and file uploads are still in progress.
+## Architecture
 
-## Technology
+```mermaid
+flowchart LR
+    B[Browser]
+    V[Vercel\nReact + Vite]
+    A[Render\nFastAPI API]
+    R[Render Key Value\nRedis-compatible]
+    D[Supabase\nPostgreSQL]
 
-- Python 3
-- FastAPI for HTTP APIs
-- PostgreSQL for persistent data
-- SQLAlchemy for Python-to-database mapping
-- Pydantic for request validation and response models
-- Alembic for versioned database migrations
-- pwdlib with Argon2 for password hashing
-- Redis for distributed token-bucket rate limiting
-- React and Vite for the frontend feed
+    B -->|HTTPS static assets| V
+    B -->|HTTPS fetch + HttpOnly cookie| A
+    A -->|rate limits| R
+    A -->|async SQLAlchemy queries| D
+```
 
-## Project structure
+| Component | Why it exists | Responsibilities |
+| --- | --- | --- |
+| React + Vite | Fast browser UI and simple static deployment | Rendering, forms, optimistic state, mobile layout, API diagnostics |
+| FastAPI | Trusted application boundary | Validation, authentication, authorization, CORS, request handling, API responses |
+| Supabase PostgreSQL | Managed relational persistence | Users, posts, comments, likes, idempotency records, foreign-key integrity |
+| Render Key Value | Shared Redis-compatible store | Distributed token-bucket rate limiting for every API instance |
+| Vercel | Frontend host/CDN | Builds and serves the Vite bundle; injects public build-time configuration |
+| Render | Backend host | Runs Uvicorn, exposes health checks, and stores production environment variables |
+
+## Repository map
 
 ```text
-Orbit/
+.
+├── frontend/Orbit/          # React 19 + Vite UI
+│   └── src/
+│       ├── App.jsx          # Screens, local state, optimistic mutations
+│       ├── App.css          # Component and responsive styles
+│       └── api/client.js    # Fetch wrapper, timeout, idempotency keys
 ├── backend/
-│   ├── main.py                 # Starts FastAPI and registers API routers.
-│   ├── dbconn.py               # Loads database settings and creates SQLAlchemy sessions.
-│   ├── security.py             # Creates secure Argon2 password hashes.
-│   ├── models/                 # SQLAlchemy definitions of database tables.
-│   ├── schemas/                # Pydantic models for API request and response data.
-│   ├── routers/                # HTTP endpoints such as /posts and /users.
-│   ├── services/               # Database operations called by the routers.
-│   ├── alembic/                # Database migration scripts.
-│   ├── alembic.ini             # Alembic command-line configuration.
-│   └── requirements.txt        # Python dependencies.
+│   ├── main.py              # App startup, middleware, CORS, health endpoint
+│   ├── auth.py              # JWT creation/validation and cookie settings
+│   ├── routers/             # HTTP route definitions
+│   ├── services/            # Database operations and ownership-scoped queries
+│   ├── schemas/             # Pydantic request/response validation
+│   ├── models/              # SQLAlchemy mappings
+│   └── alembic/             # Versioned PostgreSQL migrations
+├── render.yaml              # Render web-service blueprint
 └── README.md
 ```
 
-## How a request moves through the backend
+## Core request flows
 
-```text
-Frontend request
-    -> FastAPI application (main.py)
-    -> Router (routers/)
-    -> Service (services/)
-    -> SQLAlchemy model and PostgreSQL database
-    -> JSON response to the frontend
+### 1. Loading the public feed
+
+```mermaid
+sequenceDiagram
+    participant UI as React UI
+    participant API as FastAPI
+    participant DB as PostgreSQL
+
+    UI->>API: GET /api/posts?limit=20
+    API->>DB: Fetch posts, newest first, plus one cursor row
+    DB-->>API: Post records
+    API-->>UI: items, next_cursor, viewer-specific like/owner state
+    UI->>API: GET /api/posts/popular
+    API-->>UI: Ranked posts
 ```
 
-For example, a frontend sends `POST /users`; the users router validates the request, the user service hashes the password and saves the record, then FastAPI returns a safe response without the password.
+Visitors can read posts and comments without signing in. `GET /api/auth/me` returning `401` during page load is expected for a guest; the UI treats it as “not signed in,” not as an application error.
 
-## Setup
+Feed reads are cursor-paginated, not offset-paginated. The server requests one extra row, returns at most 20 items, and uses the last available ID as `next_cursor`. This is predictable and avoids the performance degradation of large offsets.
 
-### 1. Create and activate a virtual environment
+### 2. Signup, login, and session restoration
 
-From the repository root in PowerShell:
+```mermaid
+sequenceDiagram
+    participant UI as Browser
+    participant API as FastAPI
+    participant DB as PostgreSQL
+
+    UI->>API: POST /api/auth/signup + Idempotency-Key
+    API->>DB: Validate and store Argon2 password hash
+    DB-->>API: Safe user record
+    API-->>UI: 201 Created
+
+    UI->>API: POST /api/auth/login + Idempotency-Key
+    API->>DB: Load user and verify Argon2 hash
+    API-->>UI: Set-Cookie: HttpOnly JWT; safe user record
+
+    UI->>API: GET /api/auth/me with cookie
+    API->>DB: Validate JWT subject and load current user
+    API-->>UI: Safe user record or 401
+```
+
+The JWT contains only the user email subject and expiration. It is held in an `HttpOnly` cookie, so JavaScript cannot read it. In production the cookie must be `Secure` and `SameSite=None` because the Vercel frontend and Render API are different origins.
+
+### 3. A protected mutation
+
+```mermaid
+sequenceDiagram
+    participant UI as React client
+    participant C as CORS middleware
+    participant RL as Redis rate limiter
+    participant IK as Idempotency middleware
+    participant API as Route + authorization
+    participant DB as PostgreSQL
+
+    UI->>C: PUT/POST/DELETE + cookie + Idempotency-Key
+    C-->>UI: OPTIONS preflight response when needed
+    C->>RL: Check token bucket by user or IP
+    RL->>IK: Permit request
+    IK->>DB: Reserve scoped request key
+    IK->>API: Process only the first matching request
+    API->>DB: Validate data and mutate only permitted row(s)
+    DB-->>IK: Transaction result
+    IK-->>UI: Response; replay exact result on safe retry
+```
+
+The React client automatically creates a UUID idempotency key for every `POST`, `PUT`, and `DELETE`. The API persists successful responses for 24 hours, so a browser retry cannot duplicate a mutation. Reusing a key with a different body returns `409`.
+
+Redis is required for mutations. If it is unavailable, the service intentionally allows public reads but rejects writes with `503 rate_limiter_unavailable`. This fail-closed behavior prevents an outage from silently removing abuse protection.
+
+### 4. Updating or deleting user content
+
+Posts and comments are editable only by their author. The UI only renders edit/delete controls for records marked `is_owned_by_current_user`, but this is only a convenience. The API is the authority:
+
+```text
+UPDATE/DELETE target
+WHERE target.id = requested_id
+  AND target.author_email = authenticated_user.email
+```
+
+If no row matches, the API returns `404` for both a missing target and another user’s target. This avoids revealing whether an arbitrary ID exists. The database already defines `ON DELETE CASCADE` from posts to comments and from posts/comments to their like ledgers, so deleting a post removes its dependent conversation/like data in one safe relational operation.
+
+## Security model
+
+| Control | Why it is used |
+| --- | --- |
+| Argon2 via `pwdlib` | Passwords are slow-hashed; plaintext passwords are never stored. |
+| HttpOnly JWT cookie | Reduces token exposure to XSS compared with local storage. |
+| `Secure` + `SameSite=None` in production | Enables secure cross-origin Vercel-to-Render session cookies. |
+| Exact CORS allowlist | Limits credentialed browser requests to approved frontend origins. |
+| Pydantic schemas | Enforce types, length limits, email rules, password rules, and username format. |
+| Plain-text validation | Rejects HTML markup and null bytes before post/comment content is stored. React also renders content as text, not HTML. |
+| Ownership-scoped queries | Prevents IDOR: a valid session cannot edit or delete another account’s content. |
+| Foreign keys and checks | Prevent orphaned records, duplicate likes, and negative cached counters. |
+| Cascade deletes | Removes dependent comments/likes without foreign-key failures. |
+| Redis token buckets | Limits authentication attempts and mutations across API instances. |
+| Idempotency records | Makes network retries safe for mutations and avoids duplicate writes. |
+| 9-second SQL / 10-second request limits | Bounds stalled database work and returns structured failure responses. |
+
+Security controls reduce risk; they do not replace normal operational work. Keep secrets out of Git, rotate compromised credentials, restrict Render/Vercel access, review logs, and keep dependencies updated.
+
+## Data model
+
+| Entity | Key fields | Notes |
+| --- | --- | --- |
+| `users` | `email` primary key, password hash, optional public `username` | Email is the private authorization identity; username is the displayed author name. |
+| `posts` | ID, title, content, owner label, `author_email`, likes count | `author_email` controls ownership even if a username later changes. |
+| `comments` | ID, post ID, comment text, owner label, `author_email` | Belongs to a post and is removed when its post is deleted. |
+| `post_likes` / `comment_likes` | Composite user/resource primary keys | Makes duplicate likes physically impossible. Database triggers maintain cached counts. |
+| `idempotency_keys` | Scope, client key, request hash, completed response | Scopes a mutation key to the route/method/request principal and expires it after one day. |
+
+Alembic migrations are the source of truth for database changes. Apply them in order; do not edit production tables manually without recording a migration.
+
+## API reference
+
+All API paths are prefixed with `/api`. Mutating requests require an `Idempotency-Key` header. The frontend client adds it automatically.
+
+| Method | Path | Authentication | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/posts?limit=20&cursor=` | Optional | Cursor-paginated feed |
+| `GET` | `/posts/popular` | Optional | Engagement-ranked posts |
+| `GET` | `/posts/{post_id}` | Optional | One post |
+| `POST` | `/posts` | Required | Create a post; requires a username |
+| `PUT` | `/posts/{post_id}` | Owner only | Replace title/content/published state |
+| `DELETE` | `/posts/{post_id}` | Owner only | Delete post and dependent records |
+| `GET` | `/posts/{post_id}/comments` | Optional | Chronological comments |
+| `POST` | `/posts/{post_id}/comments` | Required | Create a comment; requires a username |
+| `PUT` | `/comments/{comment_id}` | Owner only | Replace comment text |
+| `DELETE` | `/comments/{comment_id}` | Owner only | Delete a comment |
+| `POST` / `DELETE` | `/posts/{post_id}/like` | Required | Like or unlike a post once |
+| `POST` / `DELETE` | `/comments/{comment_id}/like` | Required | Like or unlike a comment once |
+| `POST` | `/auth/signup` | Public | Create an account |
+| `POST` | `/auth/login` | Public | Set a session cookie |
+| `POST` | `/auth/logout` | Public | Clear any current session cookie |
+| `GET` | `/auth/me` | Required session | Return current safe profile |
+| `PATCH` | `/auth/me/profile` | Required session | Change public username |
+| `PUT` | `/auth/me/password` | Required session | Change password after current-password verification |
+| `POST` | `/users` | Public | Legacy account-registration route with the same validation model |
+| `GET` | `/healthz` | Public | Lightweight Render health check |
+
+Common response codes: `401` means no valid session, `404` may mean a missing or non-owned edit/delete target, `409` indicates a duplicate/conflict or in-progress idempotency request, `429` indicates rate limiting, `503` indicates unavailable Redis/database infrastructure, and `504` indicates a timeout.
+
+## Frontend behavior
+
+`frontend/Orbit/src/api/client.js` centralizes all requests. It:
+
+- Reads the Vite build-time `VITE_API_URL` and ensures it has the `/api` prefix.
+- Sends `credentials: "include"` so session cookies accompany API calls.
+- Adds `Accept: application/json`, mutation content type, and idempotency headers.
+- Aborts requests after 65 seconds and shows a server wake-up notice after four seconds.
+- Converts non-JSON proxy errors into a safe user-facing message.
+- Emits browser-console diagnostics for failures and optionally all API activity when `VITE_API_DEBUG=true`.
+
+The React UI loads feed/popular/current-user state independently, uses optimistic rendering for new posts/comments/likes, reconciles successful API responses into local state, and rolls back failed optimistic work. Post/comment edit and delete controls are rendered only for server-confirmed owners. All mutation failures become toast notifications.
+
+The UI uses fluid widths, a tablet one-column breakpoint, and a phone breakpoint. Inputs use 16px text on phones to avoid iOS auto-zoom, key controls have 44px minimum touch targets, and fixed notices are constrained to the mobile viewport.
+
+## Local development
+
+### Prerequisites
+
+- Python 3 with a virtual environment
+- Node.js and npm
+- PostgreSQL, or a Supabase database connection
+- Redis-compatible server for mutations
+
+### 1. Backend environment
+
+Copy `backend/.env.example` to `backend/.env` and provide local values. Do not commit this file.
+
+```env
+DB_NAME=Localorbit
+DB_USER=postgres
+DB_PASSWORD=replace-me
+DB_HOST=localhost
+DB_PORT=5432
+JWT_SECRET=replace-with-a-long-random-secret
+REDIS_URL=redis://localhost:6379/0
+CORS_ORIGINS=http://localhost:5173
+COOKIE_SECURE=false
+COOKIE_SAMESITE=lax
+```
+
+`DATABASE_URL` takes precedence over the individual `DB_*` values. Use it for Supabase/PostgreSQL connection URIs. When connecting to Supabase, set `DB_SSL_MODE=require`; the application handles TLS and disables async prepared-statement caches for the transaction pooler on port `6543`.
+
+### 2. Install and migrate
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-```
-
-### 2. Install dependencies
-
-```powershell
 python -m pip install -r backend\requirements.txt
-```
 
-### 3. Configure PostgreSQL
-
-Create `backend/.env` with your local PostgreSQL settings:
-
-```env
-DB_NAME="Localorbit"
-DB_USER="postgres"
-DB_PASSWORD="your-password"
-DB_HOST="localhost"
-DB_PORT="5432"
-JWT_SECRET="replace-with-a-long-random-secret"
-REDIS_URL="redis://localhost:6379/0"
-CORS_ORIGINS="http://localhost:5173"
-COOKIE_SECURE="false"
-```
-
-Do not commit `.env`, because it contains credentials.
-
-`JWT_SECRET` must be a long, random value. Set `COOKIE_SECURE="true"` when the application is served over HTTPS in production.
-
-### 4. Start Redis
-
-The mutation endpoints fail closed with `503` when Redis is unavailable. For local development with Docker:
-
-```powershell
-docker run --name orbit-redis -p 6379:6379 redis:7-alpine
-```
-
-### 5. Apply database migrations
-
-Run this command from the `backend` directory:
-
-```powershell
 cd backend
 ..\venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 ```
 
-Alembic applies each migration once and remembers the current version in PostgreSQL's `alembic_version` table.
-
-### 6. Start the API server
-
-From the `backend` directory:
+### 3. Start Redis and the API
 
 ```powershell
+docker run --name orbit-redis -p 6379:6379 redis:7-alpine
+
+cd backend
 ..\venv\Scripts\python.exe -m uvicorn main:app --reload
 ```
 
-The API runs at `http://127.0.0.1:8000`.
+The API is available at `http://127.0.0.1:8000`. OpenAPI is at `/docs`; the health endpoint is `/healthz`.
 
-- Interactive API documentation: `http://127.0.0.1:8000/docs`
-- OpenAPI JSON description: `http://127.0.0.1:8000/openapi.json`
+### 4. Start the frontend
 
-### 7. Start the frontend
-
-In a second PowerShell terminal:
+Copy `frontend/Orbit/.env.example` to `frontend/Orbit/.env` and set the local API URL if necessary.
 
 ```powershell
 cd frontend\Orbit
@@ -140,135 +277,88 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api` requests to FastAPI during development.
+Open `http://localhost:5173`.
 
-## Database tables
-
-### `users`
-
-| Column | Type | Rules | Purpose |
-| --- | --- | --- | --- |
-| `email` | text | Primary key, required | Uniquely identifies a user. |
-| `password` | text | Required | Stores an Argon2 hash, never a plaintext password. |
-| `created_at` | timestamp with timezone | Required, defaults to current time | Records account creation time. |
-
-### `posts`
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Integer primary key. |
-| `title` | Post title. |
-| `content` | Full post text. |
-| `published` | Whether the post is published; defaults to `true`. |
-| `owner` | Required foreign key to `users.email`; identifies the post owner. |
-| `created_at` | Timestamp set by PostgreSQL when the post is created. |
-| `likes_count` | Trigger-maintained cached total of durable `post_likes` records. |
-
-### `comments`, `post_likes`, and `comment_likes`
-
-`comments` belongs to a post (`ON DELETE CASCADE`) and stores its author email, body, creation timestamp, and a trigger-maintained `likes_count`. Its `(post_id, created_at, id)` index supports chronological comment rendering, and `owner` is indexed for author lookups.
-
-The two like tables are immutable-style ledgers with composite primary keys: `(user_email, post_id)` and `(user_email, comment_id)`. Those keys make a duplicate like physically impossible, even when requests race. PostgreSQL triggers update the cached counters in the same transaction, avoiding expensive `COUNT()` queries on the feed path.
-
-## API endpoints
-
-### Posts
-
-| Method | URL | Purpose |
-| --- | --- | --- |
-| `GET` | `/posts?limit=20&cursor=...` | Return one cursor-paginated feed page. |
-| `POST` | `/posts` | Create a post for the authenticated user. |
-| `GET` | `/posts/latest` | Return up to ten newest posts. |
-| `GET` | `/posts/{post_id}` | Return one post. |
-| `PUT` | `/posts/{post_id}` | Replace the authenticated owner's post fields. |
-| `DELETE` | `/posts/{post_id}` | Delete a post. |
-| `GET` | `/posts/{post_id}/comments` | Return chronological comments for a post. |
-| `POST` | `/posts/{post_id}/comments` | Add an authenticated user's comment. |
-| `POST` | `/posts/{post_id}/like` | Like a post once for the signed-in user. |
-| `DELETE` | `/posts/{post_id}/like` | Remove the signed-in user's post like. |
-| `POST` | `/comments/{comment_id}/like` | Like a comment once for the signed-in user. |
-| `DELETE` | `/comments/{comment_id}/like` | Remove the signed-in user's comment like. |
-
-### Users
-
-| Method | URL | Purpose |
-| --- | --- | --- |
-| `POST` | `/users` | Register a user. |
-
-### Authentication
-
-| Method | URL | Purpose |
-| --- | --- | --- |
-| `POST` | `/auth/login` | Verify credentials and set an HttpOnly session cookie. |
-| `POST` | `/auth/signup` | Create a user with a validated email and an Argon2 password hash. |
-| `POST` | `/auth/logout` | Clear the session cookie. |
-| `GET` | `/auth/me` | Return the authenticated user's safe profile. |
-
-Example user registration request:
-
-```json
-{
-  "email": "person@example.com",
-  "password": "at-least-eight-characters"
-}
-```
-
-Successful response:
-
-```json
-{
-  "email": "person@example.com",
-  "created_at": "2026-07-22T12:00:00+00:00"
-}
-```
-
-Registration returns `409 Conflict` if an account already uses the email address. Passwords require at least 12 characters, uppercase and lowercase letters, and a number.
-
-## Password security
-
-The backend hashes passwords through `security.py` before they reach the database. A hash cannot be converted back into the original password.
-
-Login finds a user by email, verifies the submitted password through `password_hasher.verify()`, and returns the same generic `401 Unauthorized` response for an unknown email or an incorrect password.
-
-Do not compare plaintext passwords or return a password/hash in an API response.
-
-## Database migrations
-
-Alembic tracks intentional database changes as Python files in `backend/alembic/versions/`.
-
-- `20260722_01_create_users_table.py` created the `users` table with `email` as its primary key.
-- `20260722_02_add_users_created_at.py` added the non-null `created_at` timestamp while preserving existing users.
-- `20260722_03_add_post_ownership_and_idempotency.py` backfilled existing posts to `user@example.com`, added the owner foreign key/index, and created durable idempotency records.
-- `20260722_04_add_comments_and_likes.py` adds comments, durable post/comment like ledgers, and transactionally maintained like counters.
-
-To create future migrations, first update the SQLAlchemy model, then create and review a migration before applying it. Never manually change a production table without recording the equivalent migration.
-
-## Current limitations and next steps
-
-- Threaded replies, file uploads, and display names are not implemented.
-- Redis is required before registration, login, posting, updating, or deleting can succeed.
-- Every `POST`, `PUT`, and `DELETE` must include a unique `Idempotency-Key` header; the React API client creates this automatically.
-- The backend sets a 9-second PostgreSQL statement timeout and a 10-second route timeout, returning structured `503`/`504` errors instead of hanging.
-
-## Git workflow
-
-The default GitHub branch is `main`. Use this basic workflow for future work:
+### Local quality checks
 
 ```powershell
-git status
-git add .
-git commit -m "Describe the change"
-git push
+python -m compileall -q backend
+cd frontend\Orbit
+npm run lint
+npm run build
 ```
-
-Keep secrets such as `backend/.env` out of Git commits.
 
 ## Production deployment
 
-The frontend is a Vite app in `frontend/Orbit`; deploy it to Vercel and set `VITE_API_URL` to `https://orbit-1-47b5.onrender.com/api` (including `/api`, without quotes or a trailing slash). Redeploy Vercel after saving the value because Vite embeds it during the build. The backend deploys from `backend` using the included `render.yaml` and binds to Render's `$PORT`.
+The frontend is deployed to Vercel and the API to Render using `render.yaml`.
 
-Copy `backend/.env.example` for local production-like testing and configure the same values in Render. `DATABASE_URL` must be the PostgreSQL connection URI from **Supabase Dashboard -> Connect**, not the Supabase REST URL. Set `DB_SSL_MODE=require`, `COOKIE_SECURE=true`, and `COOKIE_SAMESITE=none` for Vercel-to-Render sessions.
+### Render API variables
 
-Required Render variables: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REDIS_URL`, `SUPABASE_URL`, and `SUPABASE_KEY`. Set `CORS_ORIGINS` exactly to `https://orbit-mu-wine.vercel.app` for the current production frontend; do not include a path or trailing slash. Keep `SUPABASE_KEY` in Render only. Required Vercel variable: `VITE_API_URL`.
+| Variable | Required value/role |
+| --- | --- |
+| `ENVIRONMENT` | `production` |
+| `DATABASE_URL` | Supabase PostgreSQL connection URI, never the Supabase REST URL |
+| `DB_SSL_MODE` | `require` |
+| `JWT_SECRET` | Long random secret, stored only in Render |
+| `CORS_ORIGINS` | Exact frontend origin(s), comma-separated, no paths or trailing slashes |
+| `COOKIE_SECURE` | `true` |
+| `COOKIE_SAMESITE` | `none` |
+| `REDIS_URL` | Render Key Value internal Redis-compatible URL |
+| `SUPABASE_URL` / `SUPABASE_KEY` | Server-only values; never expose `SUPABASE_KEY` to Vercel |
 
-After each deployment, confirm `https://orbit-1-47b5.onrender.com/healthz` returns `{"status":"ok"}`. Then open the Vercel site in a private window and verify that requests target the Render `/api` URL without browser CORS errors.
+Create Render Key Value in the same region as `orbit-api`, copy its **Internal URL**, assign it to `REDIS_URL`, and redeploy the API. Reads can function without Redis, but all mutations correctly fail closed until Redis is available.
+
+### Vercel variable
+
+| Variable | Value |
+| --- | --- |
+| `VITE_API_URL` | `https://orbit-1-47b5.onrender.com/api` |
+
+Vite embeds `VITE_*` values at build time. Save the variable for Production and redeploy Vercel after changing it. Do not put database credentials, JWT secrets, Redis URLs, or `SUPABASE_KEY` into Vercel.
+
+For the current production frontend, Render must allow:
+
+```env
+CORS_ORIGINS=https://orbit-mu-wine.vercel.app
+```
+
+If the site shows a Vercel login page instead of Orbit, disable Vercel Authentication/Deployment Protection for the intended production environment or use the appropriate approved sharing mechanism.
+
+### Release checklist
+
+- [ ] `main` is pushed and the Vercel build completed successfully.
+- [ ] Render has all required production variables and has been redeployed.
+- [ ] Render Key Value is available and `REDIS_URL` uses its internal URL.
+- [ ] `https://orbit-1-47b5.onrender.com/healthz` returns `{"status":"ok"}`.
+- [ ] The Vercel URL loads in an incognito window without Vercel authentication.
+- [ ] Feed/popular reads succeed; guest `/auth/me` returns the expected `401`.
+- [ ] Signup, login, refresh/session restoration, create/edit/delete post, create/edit/delete comment, and likes succeed.
+- [ ] Browser console has no CORS failures; Render logs show preflight `200` and expected mutation responses.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `OPTIONS ... 400` or browser CORS error | Render allowlist does not match the exact Vercel origin | Set `CORS_ORIGINS` to the public origin without path/trailing slash; redeploy Render. |
+| Vercel login wall | Deployment Protection is enabled | Change the project’s Deployment Protection setting or use an approved share link. |
+| Frontend says API is missing | Vercel lacks a valid build-time API URL | Set `VITE_API_URL` and redeploy Vercel. |
+| `Rate limiter unavailable` | Redis is absent/unreachable | Provision Render Key Value, use its same-region internal URL as `REDIS_URL`, redeploy. |
+| Guest `/auth/me` is `401` | No session cookie exists | Expected behavior; sign in to create a session. |
+| Login succeeds but session is not restored | Cookie/CORS production settings are wrong | Verify exact origin, `COOKIE_SECURE=true`, and `COOKIE_SAMESITE=none`. |
+| `A valid Idempotency-Key header is required` | Custom mutation client bypassed the API helper | Send a unique `Idempotency-Key` for every `POST`, `PUT`, and `DELETE`. |
+| `503 database_unavailable` or `504 database_timeout` | Database connectivity/pool/slow-query issue | Check Supabase connection URI, SSL settings, pool limits, and Render logs. |
+| UI appears stale after changing env variables | Vite bundle was built with old values | Redeploy Vercel; `.env` changes on a local machine do not alter an existing deployment. |
+
+## Development practices
+
+- Keep `.env` files out of Git; root `.gitignore` already excludes them.
+- Make schema/model/migration changes together and review generated migration SQL before production use.
+- Use the frontend API client for all browser mutations so credentials, timeouts, diagnostics, and idempotency are consistent.
+- Treat API-side authorization as mandatory even when the UI hides controls.
+- Before release, run the quality checks and complete the release checklist above.
+
+## Current limitations
+
+- No automated test suite is currently included; compilation, linting, build checks, and manual release-flow verification are required.
+- Threaded replies, file uploads, account recovery, moderation, and a custom domain are not implemented.
+- The server-side Supabase client is provisioned for future features but is not currently the primary application access path.
