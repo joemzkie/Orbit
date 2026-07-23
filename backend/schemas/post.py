@@ -1,6 +1,20 @@
 from datetime import datetime
+import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+HTML_TAG_PATTERN = re.compile(r"<\s*/?\s*[a-zA-Z!][^>]*>")
+
+
+def validate_plain_text(value: str, field_name: str) -> str:
+    """Reject markup so user-authored text is stored and rendered as plain text only."""
+
+    if not value.strip():
+        raise ValueError(f"{field_name} cannot be blank")
+    if "\x00" in value or HTML_TAG_PATTERN.search(value):
+        raise ValueError(f"{field_name} must not contain HTML markup")
+    return value
 
 
 class PostBase(BaseModel):
@@ -12,6 +26,11 @@ class PostBase(BaseModel):
     content: str = Field(min_length=1, max_length=10_000)
     # Publish posts by default unless the client explicitly disables publication.
     published: bool = True
+
+    @field_validator("title", "content")
+    @classmethod
+    def reject_markup(cls, value: str, info) -> str:
+        return validate_plain_text(value, info.field_name.capitalize())
 
 
 class PostCreate(PostBase):

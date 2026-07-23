@@ -5,7 +5,7 @@ from auth import get_current_user, get_optional_current_user
 from dbconn import get_db
 from models.comment import Comment
 from models.user import User
-from schemas.comment import CommentCreate, CommentRead
+from schemas.comment import CommentCreate, CommentRead, CommentUpdate
 from schemas.post import LikeState, PostCreate, PostPage, PostRead, PostUpdate
 from services import comments as comments_service
 from services import posts as posts_service
@@ -28,6 +28,7 @@ async def post_read(post, db: AsyncSession, viewer_email: str | None) -> PostRea
 
     return PostRead.model_validate(post).model_copy(
         update={
+            "comments_count": await db.scalar(select(func.count(Comment.id)).where(Comment.post_id == post.id)),
             "liked_by_current_user": await posts_service.is_post_liked_by_user(db, post.id, viewer_email),
             "is_owned_by_current_user": post.author_email == viewer_email,
         }
@@ -215,12 +216,8 @@ async def delete_post(
 ):
     """Delete an authenticated user's own post."""
 
-    post = await posts_service.fetch_post_by_id(db, post_id)
-    if post is None:
+    if not await posts_service.delete_post(db, post_id, current_user.email):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post was not found")
-    if post.author_email != current_user.email:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this post")
-    await posts_service.delete_post(db, post_id, current_user.email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -233,9 +230,35 @@ async def update_post(
 ):
     """Replace fields on an authenticated user's own post."""
 
-    existing_post = await posts_service.fetch_post_by_id(db, post_id)
-    if existing_post is None:
+    updated_post = await posts_service.update_post(db, post_id, post, current_user.email)
+    if updated_post is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post was not found")
-    if existing_post.author_email != current_user.email:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this post")
-    return await posts_service.update_post(db, post_id, post, current_user.email)
+    return await post_read(updated_post, db, current_user.email)
+
+
+@router.put("/comments/{comment_id}", response_model=CommentRead)
+async def update_comment(
+    comment_id: int,
+    data: CommentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Replace a comment only when the authenticated account owns it."""
+
+    updated_comment = await comments_service.update_comment(db, comment_id, data, current_user.email)
+    if updated_comment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment was not found")
+    return (await comment_reads([updated_comment], db, current_user.email))[0]
+
+
+@router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_comment(
+    comment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a comment only when the authenticated account owns it."""
+
+    if not await comments_service.delete_comment(db, comment_id, current_user.email):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment was not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

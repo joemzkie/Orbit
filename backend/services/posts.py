@@ -65,27 +65,23 @@ async def fetch_popular_posts(db: AsyncSession) -> list[tuple[Post, int]]:
 
 
 async def delete_post(db: AsyncSession, post_id: int, owner: str) -> bool:
-    """Delete a post by ID and report whether a matching post existed."""
+    """Delete only a caller-owned post; PostgreSQL cascades dependent rows."""
 
-    # Retrieve the target post before attempting to delete it.
-    post = await db.get(Post, post_id)
-    # Signal that no deletion occurred when the target is absent.
-    if post is None or post.author_email != owner:
-        return False
-    # Mark the persisted post for removal in the active session.
-    db.delete(post)
-    # Permanently apply the deletion to the database.
+    result = await db.execute(
+        delete(Post).where(Post.id == post_id, Post.author_email == owner)
+    )
     await db.commit()
-    return True
+    return result.rowcount == 1
 
 
 async def update_post(db: AsyncSession, post_id: int, data: PostUpdate, owner: str) -> Post | None:
-    """Replace a post's mutable fields with validated update data."""
+    """Replace only a caller-owned post's mutable fields."""
 
-    # Retrieve the target post before modifying its mapped attributes.
-    post = await db.get(Post, post_id)
-    # Return no result when the requested post does not exist.
-    if post is None or post.author_email != owner:
+    result = await db.scalars(
+        select(Post).where(Post.id == post_id, Post.author_email == owner)
+    )
+    post = result.one_or_none()
+    if post is None:
         return None
     # Copy each validated field onto the existing ORM instance.
     for field, value in data.model_dump().items():

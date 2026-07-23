@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from schemas.post import validate_plain_text
+
 
 class CommentCreate(BaseModel):
     """Validate a new plain-text comment."""
@@ -11,11 +13,15 @@ class CommentCreate(BaseModel):
     @field_validator("comment")
     @classmethod
     def reject_blank_comment(cls, value: str) -> str:
-        """Keep intentional whitespace inside comments but reject empty submissions."""
+        """Store comments as non-empty plain text, never executable markup."""
 
-        if not value.strip():
-            raise ValueError("Comment cannot be blank")
-        return value
+        return validate_plain_text(value, "Comment")
+
+
+class CommentUpdate(CommentCreate):
+    """Validate a complete replacement of an existing comment."""
+
+    pass
 
 
 class CommentRead(BaseModel):

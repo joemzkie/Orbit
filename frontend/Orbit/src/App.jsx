@@ -16,6 +16,9 @@ function CommentSection({ post, currentUser, showError }) {
   const [comment, setComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentActionId, setCommentActionId] = useState(null);
 
   useEffect(() => {
     if (!Number.isInteger(post.id)) return;
@@ -118,6 +121,37 @@ function CommentSection({ post, currentUser, showError }) {
     }
   }
 
+  async function saveComment(item) {
+    const nextComment = commentDraft.trim();
+    if (!nextComment || commentActionId) return;
+    setCommentActionId(item.id);
+    try {
+      const updated = await api.updateComment(item.id, nextComment);
+      setComments((items) =>
+        items.map((current) => (current.id === item.id ? updated : current)),
+      );
+      setEditingCommentId(null);
+      setCommentDraft("");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setCommentActionId(null);
+    }
+  }
+
+  async function removeComment(item) {
+    if (commentActionId || !window.confirm("Delete this comment?")) return;
+    setCommentActionId(item.id);
+    try {
+      await api.deleteComment(item.id);
+      setComments((items) => items.filter((current) => current.id !== item.id));
+    } catch (error) {
+      showError(error);
+    } finally {
+      setCommentActionId(null);
+    }
+  }
+
   return (
     <section className="comments" aria-label="Comments">
       <h3>Comments {comments.length ? `(${comments.length})` : ""}</h3>
@@ -138,7 +172,41 @@ function CommentSection({ post, currentUser, showError }) {
                     {new Date(item.created_at).toLocaleString()}
                   </time>
                 </header>
-                <p>{item.comment}</p>
+                {editingCommentId === item.id ? (
+                  <form
+                    className="comment-edit-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      saveComment(item);
+                    }}
+                  >
+                    <textarea
+                      required
+                      maxLength="5000"
+                      value={commentDraft}
+                      onChange={(event) => setCommentDraft(event.target.value)}
+                      disabled={commentActionId === item.id}
+                    />
+                    <div className="content-actions">
+                      <button type="submit" disabled={commentActionId === item.id}>
+                        {commentActionId === item.id ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        className="text-button"
+                        type="button"
+                        disabled={commentActionId === item.id}
+                        onClick={() => {
+                          setEditingCommentId(null);
+                          setCommentDraft("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <p>{item.comment}</p>
+                )}
                 <button
                   className={`comment-like-button${item.liked_by_current_user ? " comment-like-button--active" : ""}`}
                   type="button"
@@ -153,6 +221,29 @@ function CommentSection({ post, currentUser, showError }) {
                 </button>
                 {isOwner && (
                   <span className="comment-self-like-note">Your comment</span>
+                )}
+                {item.is_owned_by_current_user && editingCommentId !== item.id && (
+                  <div className="content-actions">
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={commentActionId === item.id}
+                      onClick={() => {
+                        setEditingCommentId(item.id);
+                        setCommentDraft(item.comment);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="text-button destructive-action"
+                      type="button"
+                      disabled={commentActionId === item.id}
+                      onClick={() => removeComment(item)}
+                    >
+                      {commentActionId === item.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
                 )}
               </article>
             );
@@ -189,9 +280,13 @@ function CommentSection({ post, currentUser, showError }) {
   );
 }
 
-function PostCard({ post, currentUser, onToggleLike, showError }) {
+function PostCard({ post, currentUser, onToggleLike, onUpdatePost, onDeletePost, deleting, showError }) {
   const isOwner = post.is_owned_by_current_user;
   const [likeBusy, setLikeBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(post.title);
+  const [contentDraft, setContentDraft] = useState(post.content);
+  const [saving, setSaving] = useState(false);
 
   async function toggleLike() {
     if (!currentUser || isOwner || likeBusy || post.pending) return;
@@ -200,6 +295,22 @@ function PostCard({ post, currentUser, onToggleLike, showError }) {
       await onToggleLike(post);
     } finally {
       window.setTimeout(() => setLikeBusy(false), 300);
+    }
+  }
+
+  async function savePost(event) {
+    event.preventDefault();
+    if (saving || !titleDraft.trim() || !contentDraft.trim()) return;
+    setSaving(true);
+    try {
+      await onUpdatePost(post, {
+        title: titleDraft.trim(),
+        content: contentDraft.trim(),
+        published: post.published,
+      });
+      setEditing(false);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -219,8 +330,50 @@ function PostCard({ post, currentUser, onToggleLike, showError }) {
         {post.pending && <span className="pending-badge">Sending…</span>}
       </header>
       <div className="post-body">
-        <h2>{post.title}</h2>
-        <p>{post.content}</p>
+        {editing ? (
+          <form className="post-edit-form" onSubmit={savePost}>
+            <label>
+              Title
+              <input
+                required
+                maxLength="255"
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                disabled={saving}
+              />
+            </label>
+            <label>
+              Content
+              <textarea
+                required
+                maxLength="10000"
+                value={contentDraft}
+                onChange={(event) => setContentDraft(event.target.value)}
+                disabled={saving}
+              />
+            </label>
+            <div className="content-actions">
+              <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
+              <button
+                className="text-button"
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  setTitleDraft(post.title);
+                  setContentDraft(post.content);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <h2>{post.title}</h2>
+            <p>{post.content}</p>
+          </>
+        )}
       </div>
       <footer>
         <time dateTime={post.created_at}>
@@ -241,6 +394,21 @@ function PostCard({ post, currentUser, onToggleLike, showError }) {
       </footer>
       {isOwner && (
         <p className="self-like-note">You cannot like your own post.</p>
+      )}
+      {post.is_owned_by_current_user && !editing && (
+        <div className="content-actions post-actions">
+          <button className="text-button" type="button" onClick={() => setEditing(true)}>
+            Edit
+          </button>
+          <button
+            className="text-button destructive-action"
+            type="button"
+            disabled={deleting}
+            onClick={() => onDeletePost(post)}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       )}
       <CommentSection
         post={post}
@@ -548,6 +716,7 @@ function App() {
   const [authPending, setAuthPending] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [postPending, setPostPending] = useState(false);
+  const [deletingPostId, setDeletingPostId] = useState(null);
   const [toast, setToast] = useState("");
   const [serverWaking, setServerWaking] = useState(false);
   const [title, setTitle] = useState("");
@@ -699,6 +868,43 @@ function App() {
       return false;
     } finally {
       setAuthPending(false);
+    }
+  }
+
+  async function handleUpdatePost(post, changes) {
+    try {
+      const updated = await api.updatePost(post.id, changes);
+      setPosts((items) =>
+        items.map((item) => (item.id === post.id ? { ...item, ...updated } : item)),
+      );
+      setPopularPosts((items) =>
+        items.map((item) => (item.id === post.id ? { ...item, ...updated } : item)),
+      );
+      setSelectedPost((current) =>
+        current?.id === post.id ? { ...current, ...updated } : current,
+      );
+    } catch (error) {
+      showError(error);
+      throw error;
+    }
+  }
+
+  async function handleDeletePost(post) {
+    if (deletingPostId || !window.confirm("Delete this post and all of its comments?")) return;
+    setDeletingPostId(post.id);
+    try {
+      await api.deletePost(post.id);
+      setPosts((items) => items.filter((item) => item.id !== post.id));
+      setPopularPosts((items) => items.filter((item) => item.id !== post.id));
+      if (selectedPostId === post.id) {
+        window.location.hash = "#/";
+      }
+      setSelectedPost((current) => (current?.id === post.id ? null : current));
+      setToast("Post deleted.");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setDeletingPostId(null);
     }
   }
 
@@ -888,6 +1094,9 @@ function App() {
                   post={selectedPost}
                   currentUser={user}
                   onToggleLike={handleToggleLike}
+                  onUpdatePost={handleUpdatePost}
+                  onDeletePost={handleDeletePost}
+                  deleting={deletingPostId === selectedPost.id}
                   showError={showError}
                 />
               ) : (
@@ -965,6 +1174,9 @@ function App() {
                       post={post}
                       currentUser={user}
                       onToggleLike={handleToggleLike}
+                      onUpdatePost={handleUpdatePost}
+                      onDeletePost={handleDeletePost}
+                      deleting={deletingPostId === post.id}
                       showError={showError}
                     />
                   ))

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.comment import Comment
 from models.like import CommentLike
-from schemas.comment import CommentCreate
+from schemas.comment import CommentCreate, CommentUpdate
 
 
 async def create_comment(db: AsyncSession, post_id: int, data: CommentCreate, owner: str, author_email: str) -> Comment:
@@ -22,6 +22,31 @@ async def fetch_comments_for_post(db: AsyncSession, post_id: int) -> list[Commen
 
     statement = select(Comment).where(Comment.post_id == post_id).order_by(Comment.created_at.asc(), Comment.id.asc())
     return list((await db.scalars(statement)).all())
+
+
+async def update_comment(db: AsyncSession, comment_id: int, data: CommentUpdate, owner: str) -> Comment | None:
+    """Replace only a caller-owned comment's text."""
+
+    result = await db.scalars(
+        select(Comment).where(Comment.id == comment_id, Comment.author_email == owner)
+    )
+    comment = result.one_or_none()
+    if comment is None:
+        return None
+    comment.comment = data.comment
+    await db.commit()
+    await db.refresh(comment)
+    return comment
+
+
+async def delete_comment(db: AsyncSession, comment_id: int, owner: str) -> bool:
+    """Delete only a caller-owned comment without revealing whether it exists."""
+
+    result = await db.execute(
+        delete(Comment).where(Comment.id == comment_id, Comment.author_email == owner)
+    )
+    await db.commit()
+    return result.rowcount == 1
 
 
 async def like_comment(db: AsyncSession, comment_id: int, user_email: str) -> Comment | None:

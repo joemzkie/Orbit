@@ -169,9 +169,14 @@ export const api = {
   getPost: (postId) => request(`/posts/${postId}`),
   getPopularPosts: () => request("/posts/popular"),
   createPost: (post) => mutation("/posts", "POST", post),
+  updatePost: (postId, post) => mutation(`/posts/${postId}`, "PUT", post),
+  deletePost: (postId) => mutation(`/posts/${postId}`, "DELETE"),
   getComments: (postId) => request(`/posts/${postId}/comments`),
   createComment: (postId, comment) =>
     mutation(`/posts/${postId}/comments`, "POST", { comment }),
+  updateComment: (commentId, comment) =>
+    mutation(`/comments/${commentId}`, "PUT", { comment }),
+  deleteComment: (commentId) => mutation(`/comments/${commentId}`, "DELETE"),
   likePost: (postId) => mutation(`/posts/${postId}/like`, "POST"),
   unlikePost: (postId) => mutation(`/posts/${postId}/like`, "DELETE"),
   likeComment: (commentId) => mutation(`/comments/${commentId}/like`, "POST"),
