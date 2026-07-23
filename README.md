@@ -64,16 +64,15 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant UI as React UI
-    participant API as FastAPI
-    participant DB as PostgreSQL
-
-    UI->>API: GET /api/posts?limit=20
-    API->>DB: Fetch posts, newest first, plus one cursor row
-    DB-->>API: Post records
-    API-->>UI: items, next_cursor, viewer-specific like/owner state
-    UI->>API: GET /api/posts/popular
-    API-->>UI: Ranked posts
+    participant UI as Browser
+    participant API as API
+    participant DB as Database
+    UI->>API: Request feed page
+    API->>DB: Query posts
+    DB-->>API: Return posts
+    API-->>UI: Return feed data
+    UI->>API: Request popular posts
+    API-->>UI: Return popular posts
 ```
 
 Visitors can read posts and comments without signing in. `GET /api/auth/me` returning `401` during page load is expected for a guest; the UI treats it as “not signed in,” not as an application error.
@@ -85,21 +84,18 @@ Feed reads are cursor-paginated, not offset-paginated. The server requests one e
 ```mermaid
 sequenceDiagram
     participant UI as Browser
-    participant API as FastAPI
-    participant DB as PostgreSQL
-
-    UI->>API: POST /api/auth/signup + Idempotency-Key
-    API->>DB: Validate and store Argon2 password hash
-    DB-->>API: Safe user record
-    API-->>UI: 201 Created
-
-    UI->>API: POST /api/auth/login + Idempotency-Key
-    API->>DB: Load user and verify Argon2 hash
-    API-->>UI: Set-Cookie: HttpOnly JWT; safe user record
-
-    UI->>API: GET /api/auth/me with cookie
-    API->>DB: Validate JWT subject and load current user
-    API-->>UI: Safe user record or 401
+    participant API as API
+    participant DB as Database
+    UI->>API: Submit signup
+    API->>DB: Store password hash
+    DB-->>API: Return user
+    API-->>UI: Account created
+    UI->>API: Submit login
+    API->>DB: Verify password
+    API-->>UI: Set session cookie
+    UI->>API: Restore session
+    API->>DB: Load current user
+    API-->>UI: Return user or unauthorized
 ```
 
 The JWT contains only the user email subject and expiration. It is held in an `HttpOnly` cookie, so JavaScript cannot read it. In production the cookie must be `Secure` and `SameSite=None` because the Vercel frontend and Render API are different origins.
@@ -108,22 +104,21 @@ The JWT contains only the user email subject and expiration. It is held in an `H
 
 ```mermaid
 sequenceDiagram
-    participant UI as React client
-    participant C as CORS middleware
-    participant RL as Redis rate limiter
-    participant IK as Idempotency middleware
-    participant API as Route + authorization
-    participant DB as PostgreSQL
-
-    UI->>C: PUT/POST/DELETE + cookie + Idempotency-Key
-    C-->>UI: OPTIONS preflight response when needed
-    C->>RL: Check token bucket by user or IP
-    RL->>IK: Permit request
-    IK->>DB: Reserve scoped request key
-    IK->>API: Process only the first matching request
-    API->>DB: Validate data and mutate only permitted row(s)
-    DB-->>IK: Transaction result
-    IK-->>UI: Response; replay exact result on safe retry
+    participant UI as Browser
+    participant CORS as CORS
+    participant Rate as Rate limiter
+    participant Idem as Idempotency
+    participant API as API
+    participant DB as Database
+    UI->>CORS: Send mutation
+    CORS-->>UI: Answer preflight
+    CORS->>Rate: Check request limit
+    Rate->>Idem: Permit request
+    Idem->>DB: Reserve request key
+    Idem->>API: Process first request
+    API->>DB: Validate and write data
+    DB-->>Idem: Return result
+    Idem-->>UI: Return or replay result
 ```
 
 The React client automatically creates a UUID idempotency key for every `POST`, `PUT`, and `DELETE`. The API persists successful responses for 24 hours, so a browser retry cannot duplicate a mutation. Reusing a key with a different body returns `409`.
