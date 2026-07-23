@@ -1,12 +1,9 @@
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
 
 function apiBaseUrl(value) {
-  // Local development can use the Vite proxy by leaving VITE_API_URL unset.
-  if (!value) return "/api";
+  if (!value || !/^https?:\/\//i.test(value)) return null;
 
   const base = value.replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(base)) return base;
-
   const url = new URL(base);
   // Render is served over TLS. Avoid an HTTP request that Render would redirect.
   if (import.meta.env.PROD) url.protocol = "https:";
@@ -59,8 +56,17 @@ function idempotencyKey() {
 }
 
 async function request(path, options = {}) {
-  const url = apiUrl(path);
   const method = options.method || "GET";
+  if (!API_BASE) {
+    const error = new ApiError(
+      "The frontend is missing a valid VITE_API_URL configuration.",
+      500,
+      "api_configuration_error",
+    );
+    logApiDiagnostic("request_failed", { method, url: null, error: error.message });
+    throw error;
+  }
+  const url = apiUrl(path);
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let isSlow = false;

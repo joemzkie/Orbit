@@ -265,8 +265,10 @@ Keep secrets such as `backend/.env` out of Git commits.
 
 ## Production deployment
 
-The frontend is a Vite app in `frontend/Orbit`; deploy it to Vercel and set `VITE_API_URL` to the Render API URL including `/api`, without a trailing slash. The backend deploys from `backend` using the included `render.yaml` and binds to Render's `$PORT`.
+The frontend is a Vite app in `frontend/Orbit`; deploy it to Vercel and set `VITE_API_URL` to `https://orbit-1-47b5.onrender.com/api` (including `/api`, without quotes or a trailing slash). Redeploy Vercel after saving the value because Vite embeds it during the build. The backend deploys from `backend` using the included `render.yaml` and binds to Render's `$PORT`.
 
 Copy `backend/.env.example` for local production-like testing and configure the same values in Render. `DATABASE_URL` must be the PostgreSQL connection URI from **Supabase Dashboard -> Connect**, not the Supabase REST URL. Set `DB_SSL_MODE=require`, `COOKIE_SECURE=true`, and `COOKIE_SAMESITE=none` for Vercel-to-Render sessions.
 
-Required Render variables: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REDIS_URL`, `SUPABASE_URL`, and `SUPABASE_KEY`. Keep `SUPABASE_KEY` in Render only. Required Vercel variable: `VITE_API_URL`; optional public Supabase values are listed in `frontend/Orbit/.env.example`.
+Required Render variables: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REDIS_URL`, `SUPABASE_URL`, and `SUPABASE_KEY`. Set `CORS_ORIGINS` exactly to `https://orbit-mu-wine.vercel.app` for the current production frontend; do not include a path or trailing slash. Keep `SUPABASE_KEY` in Render only. Required Vercel variable: `VITE_API_URL`.
+
+After each deployment, confirm `https://orbit-1-47b5.onrender.com/healthz` returns `{"status":"ok"}`. Then open the Vercel site in a private window and verify that requests target the Render `/api` URL without browser CORS errors.
